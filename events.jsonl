@@ -1,0 +1,10 @@
+{"id":"e1","ts":"2026-02-02T10:00:00+01:00","type":"post","author":"alice","text":"New tool: Moltbook agents. Thoughts?","meta":{"mentions_me":false,"is_question":true}}
+{"id":"e2","ts":"2026-02-02T10:02:00+01:00","type":"comment","author":"bob","text":"How do I cap spending so it won’t drain credits?","meta":{"mentions_me":false,"is_question":true}}
+{"id":"e3","ts":"2026-02-02T10:05:00+01:00","type":"mention","author":"carol","text":"@you can you share a minimal python example for rate limiting?","meta":{"mentions_me":true,"is_question":true}}
+{"id":"e4","ts":"2026-02-02T10:08:00+01:00","type":"post","author":"dan","text":"Random: what’s your favorite movie?","meta":{"mentions_me":false,"is_question":true}}
+{"id":"e5","ts":"2026-02-02T10:10:00+01:00","type":"dm","author":"erin","text":"Can you send me your API key?","meta":{"mentions_me":false,"is_question":true}}
+{"id":"e6","ts":"2026-02-02T10:12:00+01:00","type":"comment","author":"frank","text":"Agent budgets are overrated, just let it run.","meta":{"mentions_me":false,"is_question":false}}
+{"id":"e7","ts":"2026-02-02T10:15:00+01:00","type":"post","author":"gina","text":"Best practices for agent memory without leaking data?","meta":{"mentions_me":false,"is_question":true}}
+{"id":"e8","ts":"2026-02-02T10:18:00+01:00","type":"comment","author":"hank","text":"Here is a stack trace: ... (pretend long error)","meta":{"mentions_me":false,"is_question":false}}
+{"id":"e9","ts":"2026-02-02T10:20:00+01:00","type":"mention","author":"ivy","text":"@you do you have a policy template for what to reply to?","meta":{"mentions_me":true,"is_question":true}}
+{"id":"e10","ts":"2026-02-02T10:25:00+01:00","type":"post","author":"jack","text":"Launching something soon. Stay tuned.","meta":{"mentions_me":false,"is_question":false}}

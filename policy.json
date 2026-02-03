@@ -1,0 +1,65 @@
+{
+  "daily_budget_usd": 1.0,
+  "max_calls_per_day": 200,
+  "min_seconds_between_calls": 1.0,
+  "scheduler": {
+    "enabled": true,
+    "burst_p0": 8,
+    "burst_p1": 4
+  },
+  "reply": {
+    "max_replies_per_hour_p2": 2,
+    "reply_to_mentions_always": true,
+    "reply_to_questions_always": true,
+    "offtopic_question_mode": "redirect"
+  },
+  "domain": {
+    "context": "You are assisting with Moltbook agents: setup, behavior rules, safety, cost control (rate limits, daily budgets), and integration patterns. Stay within this scope."
+  },
+  "topics": {
+    "allow_keywords": [
+      "agent",
+      "agents",
+      "budget",
+      "rate limit",
+      "quota",
+      "credits",
+      "billing",
+      "cost",
+      "spend",
+      "spending",
+      "price",
+      "limit",
+      "moltbook",
+      "api",
+      "python",
+      "openai",
+      "vps",
+      "integration",
+      "webhook",
+      "polling",
+      "audit",
+      "logging",
+      "memory"
+    ],
+    "block_keywords": [
+      "password",
+      "api key",
+      "secret",
+      "token",
+      "private key",
+      "seed phrase",
+      "exploit",
+      "dox"
+    ]
+  },
+  "style": {
+    "language": "en",
+    "max_sentences": 5,
+    "format": "steps"
+  },
+  "operator": {
+    "language": "hu",
+    "verbosity": "short"
+  }
+}

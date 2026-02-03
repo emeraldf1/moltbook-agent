@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+venv/
+.env
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# macOS
+.DS_Store
+
+# Logs and state (runtime generated)
+logs/
+agent_state.json
+
+# Old versions (optional, remove if you want to track them)
+# agent_v0.py
+# agent_v1.py
+# agent_v2.py
