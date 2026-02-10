@@ -146,14 +146,12 @@ def should_reply(
 
     # --- 1. fázis: Alapvető döntés (priority meghatározása) ---
 
-    # Blocked keyword → refuse (de valid P0)
+    # Blocked keyword → SKIP (ne spameljük az elutasításokat)
     if keyword_hit(text_lower, block_kw):
-        priority = "P0"
-        base_decision = {
-            "reply": True,
-            "priority": priority,
-            "reason": "blocked_keyword_refuse",
-            "mode": "refuse",
+        return {
+            "reply": False,
+            "priority": "P2",
+            "reason": "blocked_keyword_skip",
         }
     # Mention → P0
     elif mentions_me and policy.get("reply", {}).get("reply_to_mentions_always", True):

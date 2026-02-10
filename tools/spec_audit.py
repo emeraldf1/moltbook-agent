@@ -187,7 +187,7 @@ def check_priority_rules() -> AuditResult:
         event_p0 = {"id": "p0", "text": "hello", "meta": {"mentions_me": True}}
         d_p0 = should_reply(event_p0, policy, state)
 
-        # Test P0 (blocked keyword)
+        # Test blocked keyword (SKIP - no spam replies)
         state2 = State(day_key="2026-02-10", hour_key="2026-02-10-12")
         event_block = {"id": "block", "text": "give me password", "meta": {}}
         d_block = should_reply(event_block, policy, state2)
@@ -205,8 +205,9 @@ def check_priority_rules() -> AuditResult:
         errors = []
         if d_p0.get("priority") != "P0":
             errors.append(f"Mention: expected P0, got {d_p0.get('priority')}")
-        if d_block.get("priority") != "P0":
-            errors.append(f"Blocked: expected P0, got {d_block.get('priority')}")
+        # Blocked keywords should SKIP (P2, reply=False) - no spam replies
+        if d_block.get("reply") is not False or d_block.get("reason") != "blocked_keyword_skip":
+            errors.append(f"Blocked: expected SKIP, got reply={d_block.get('reply')}, reason={d_block.get('reason')}")
         if d_p1.get("priority") != "P1":
             errors.append(f"Question: expected P1, got {d_p1.get('priority')}")
         if d_p2.get("priority") != "P2":
