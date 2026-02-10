@@ -19,7 +19,8 @@ venv/
 logs/
 agent_state.json
 
-# Old versions (optional, remove if you want to track them)
-# agent_v0.py
-# agent_v1.py
-# agent_v2.py
+# Local files (not tracked)
+local/
+
+# Claude Code session data
+.claude/
