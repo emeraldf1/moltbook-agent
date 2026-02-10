@@ -1587,6 +1587,146 @@ pytest>=8.0.0
 
 ---
 
-## Fejlesztés #10: (Következő feature ide kerül)
+## Fejlesztés #10: Moltbook Adapter
+
+**Verzió:** 1.0
+**Státusz:** ✅ KÉSZ
+**SPEC hivatkozás:** Fázis 4 - Moltbook adapter
+**ROADMAP hivatkozás:** Fázis 4
+
+---
+
+### 1. Áttekintés
+
+#### 1.1 Cél
+Valódi Moltbook API integráció, az `events.jsonl` mock helyett élő API polling és reply küldés.
+
+#### 1.2 Fő funkciók
+- **Mock adapter** - Teszteléshez, JSONL fájlból olvas
+- **Moltbook adapter** - Valódi API, feed polling és comment küldés
+- **Dry-run mód** - Alapértelmezetten nem küld semmit (biztonság)
+- **--live flag** - Explicit engedélyezés szükséges az éles küldéshez
+
+---
+
+### 2. Architektúra
+
+```
+adapters/
+├── __init__.py      # Factory: get_adapter()
+├── base.py          # BaseAdapter ABC
+├── mock.py          # MockAdapter - JSONL alapú
+└── moltbook.py      # MoltbookAdapter - API alapú
+```
+
+#### 2.1 BaseAdapter interface
+
+```python
+class BaseAdapter(ABC):
+    def fetch_events(self, limit: int = 50) -> List[Dict]
+    def send_reply(self, event_id, text, post_id, parent_id) -> bool
+    def get_agent_info(self) -> Dict
+    @property agent_name: str
+    @property is_dry_run: bool
+```
+
+---
+
+### 3. Használat
+
+#### 3.1 Mock adapter (alapértelmezett)
+
+```bash
+python agent_dryrun.py --adapter mock
+# Vagy: policy.json-ban "adapter": "mock"
+```
+
+#### 3.2 Moltbook adapter (dry-run)
+
+```bash
+python agent_dryrun.py --adapter moltbook
+# Feed-et lekéri, válaszokat CSAK logolja
+```
+
+#### 3.3 Moltbook adapter (éles)
+
+```bash
+python agent_dryrun.py --adapter moltbook --live
+# FIGYELEM: Ténylegesen posztol a Moltbook-ra!
+```
+
+---
+
+### 4. Konfiguráció
+
+#### 4.1 Környezeti változók (.env)
+
+```
+MOLTBOOK_API_KEY=moltbook_sk_...
+MOLTBOOK_AGENT_NAME=YourAgentName
+MOLTBOOK_DRY_RUN=true  # Opcionális, default: true
+```
+
+#### 4.2 Policy.json
+
+```json
+{
+  "adapter": "mock",  // vagy "moltbook"
+  "moltbook": {
+    "poll_interval_sec": 60,
+    "reply_to_posts": true,
+    "reply_to_comments": true
+  }
+}
+```
+
+---
+
+### 5. Moltbook API endpointok
+
+| Endpoint | Cél |
+|----------|-----|
+| `GET /feed` | Események lekérése |
+| `POST /posts/{id}/comments` | Válasz küldése |
+| `GET /agents/me` | Agent info |
+
+#### 5.1 Rate limitek
+- 100 requests/minute
+- 1 comment per 20 seconds
+- 50 comments/day
+
+---
+
+### 6. Tesztek
+
+28 új teszt az `tests/test_adapters.py`-ben:
+
+- `TestAdapterFactory` - Factory tesztek
+- `TestMockAdapter` - Mock adapter tesztek
+- `TestMoltbookAdapter` - API adapter tesztek
+- `TestMoltbookRateLimiting` - Rate limit tesztek
+
+---
+
+### 7. Acceptance Criteria
+
+- [x] AC-1: Mock adapter ugyanúgy működik, mint eddig
+- [x] AC-2: Moltbook adapter lekéri a feed-et
+- [x] AC-3: Moltbook adapter küld választ (dry-run és live)
+- [x] AC-4: Policy `adapter` mező működik
+- [x] AC-5: Meglévő tesztek PASS (173 összesen)
+- [x] AC-6: Új adapter tesztek PASS (28 új)
+
+---
+
+### 8. Változtatási napló
+
+| Dátum | Verzió | Változás |
+|-------|--------|----------|
+| 2025-02-10 | 1.0 | Implementáció kész |
+
+---
+
+## Fejlesztés #11: (Következő feature ide kerül)
 
 (Placeholder a következő fejlesztéshez)
