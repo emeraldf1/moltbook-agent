@@ -299,7 +299,21 @@ def _status() -> None:
     lines.append(f"Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     lines.append(f"State file: {'OK' if _exists(STATE_FILE) else 'missing'}")
     if st:
-        lines.append(f"  day_key={st.get('day_key')} calls_today={st.get('calls_today')} spent_usd={st.get('spent_usd')}")
+        spent = st.get('spent_usd', 0)
+        budget = pol.get('daily_budget_usd', 1.0) if pol else 1.0
+        usage_pct = (spent / budget * 100) if budget > 0 else 0
+
+        # Budget warning indicator
+        budget_status = "✅"
+        if usage_pct >= 100:
+            budget_status = "🚨 EXHAUSTED"
+        elif usage_pct >= 95:
+            budget_status = "⚠️  CRITICAL"
+        elif usage_pct >= 80:
+            budget_status = "⚠️  WARNING"
+
+        lines.append(f"  day_key={st.get('day_key')} calls_today={st.get('calls_today')}")
+        lines.append(f"  💰 Budget: ${spent:.4f} / ${budget:.2f} ({usage_pct:.1f}%) {budget_status}")
         lines.append(f"  hour_key={st.get('hour_key')} p2_replies_this_hour={st.get('p2_replies_this_hour')}")
         # Scheduler burst counters
         burst_p0_used = st.get('burst_used_p0', 0)
@@ -334,6 +348,30 @@ def _status() -> None:
     lines.append("Files:")
     for p in [EVENTS_FILE, POLICY_FILE, STATE_FILE, EVENT_LOG, DECISION_LOG, OUTBOUND_LOG, OPERATOR_LOG]:
         lines.append(f"  {p}: {'OK' if _exists(p) else 'missing'}")
+
+    # Monitoring files
+    monitoring_log = os.path.join(LOG_DIR, "monitoring.jsonl")
+    daily_summary_log = os.path.join(LOG_DIR, "daily_summary.jsonl")
+    moltbook_replies_log = os.path.join(LOG_DIR, "moltbook_replies.jsonl")
+
+    lines.append("")
+    lines.append("Monitoring:")
+    lines.append(f"  {monitoring_log}: {'OK' if _exists(monitoring_log) else 'not yet'}")
+    lines.append(f"  {daily_summary_log}: {'OK' if _exists(daily_summary_log) else 'not yet'}")
+    lines.append(f"  {moltbook_replies_log}: {'OK' if _exists(moltbook_replies_log) else 'not yet'}")
+
+    # Show last daily summary if exists
+    if _exists(daily_summary_log):
+        summaries = _tail_jsonl(daily_summary_log, 1)
+        if summaries:
+            last = summaries[0]
+            budget_info = last.get("budget", {})
+            activity = last.get("activity", {})
+            lines.append("")
+            lines.append(f"📊 Last daily summary ({last.get('day_key', '?')}):")
+            lines.append(f"   Budget: ${budget_info.get('spent_usd', 0):.4f} / ${budget_info.get('daily_budget_usd', 0):.2f}")
+            lines.append(f"   Replied: {activity.get('replied', 0)} | Errors: {activity.get('errors', 0)}")
+
     _print_card("STATUS", "\n".join(lines))
 
 

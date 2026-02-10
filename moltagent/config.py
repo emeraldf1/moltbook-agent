@@ -48,3 +48,17 @@ MAX_RETRIES = 3  # Maximum retry attempts
 RETRY_BASE_DELAY = 1.0  # Base delay in seconds
 RETRY_MAX_DELAY = 30.0  # Maximum delay in seconds
 ERROR_LOG = os.path.join(LOG_DIR, "errors.jsonl")
+
+# -------------------------
+# MOLTBOOK CONFIG
+# -------------------------
+# Environment variables for Moltbook adapter
+# MOLTBOOK_API_KEY - API key for Moltbook
+# MOLTBOOK_AGENT_NAME - Agent name for mention detection
+# MOLTBOOK_DRY_RUN - If "true", don't actually post (default: true)
+
+MOLTBOOK_BASE_URL = "https://www.moltbook.com/api/v1"
+MOLTBOOK_MIN_SECONDS_BETWEEN_COMMENTS = 20  # Moltbook rate limit
+MOLTBOOK_MAX_COMMENTS_PER_DAY = 50  # Moltbook daily limit
+MOLTBOOK_REPLIES_LOG = os.path.join(LOG_DIR, "moltbook_replies.jsonl")
+MOLTBOOK_FETCHED_LOG = os.path.join(LOG_DIR, "moltbook_fetched.jsonl")

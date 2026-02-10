@@ -4,9 +4,13 @@ agent_dryrun.py - Dry-run feldolgozó a moltagent csomaggal.
 
 Scheduler (Daily Pacer) támogatással - policy.json-ban kapcsolható:
   "scheduler": {"enabled": true/false, "burst_p0": 8, "burst_p1": 4}
+
+Adapter támogatás - policy.json-ban:
+  "adapter": "mock" | "moltbook"
 """
 from __future__ import annotations
 
+import argparse
 import json
 import os
 import time
@@ -38,13 +42,14 @@ from moltagent import (
 from moltagent.retry import ReplyError
 from moltagent.utils import TZ_HOURS
 from moltagent.config import CHARS_PER_TOKEN_EST, USD_PER_1M_INPUT_TOKENS, USD_PER_1M_OUTPUT_TOKENS
+from adapters import get_adapter, BaseAdapter
 
 load_dotenv()
 client = OpenAI()
 
 
 def load_events(path: str = "events.jsonl") -> List[Dict[str, Any]]:
-    """Betölti az eseményeket a JSONL fájlból."""
+    """Betölti az eseményeket a JSONL fájlból. (Legacy - mock adapter használja)"""
     if not os.path.exists(path):
         return []
 
@@ -57,7 +62,37 @@ def load_events(path: str = "events.jsonl") -> List[Dict[str, Any]]:
     return events
 
 
+def get_events_from_adapter(adapter: BaseAdapter, limit: int = 50) -> List[Dict[str, Any]]:
+    """Események lekérése az adapterből."""
+    return adapter.fetch_events(limit=limit)
+
+
+def parse_args() -> argparse.Namespace:
+    """Parse command line arguments."""
+    parser = argparse.ArgumentParser(
+        description="Moltbook Agent dry-run processor"
+    )
+    parser.add_argument(
+        "--adapter",
+        choices=["mock", "moltbook"],
+        help="Adapter to use (overrides policy.json)"
+    )
+    parser.add_argument(
+        "--live",
+        action="store_true",
+        help="Actually send replies (disables dry-run for Moltbook adapter)"
+    )
+    parser.add_argument(
+        "--limit",
+        type=int,
+        default=50,
+        help="Maximum number of events to fetch (default: 50)"
+    )
+    return parser.parse_args()
+
+
 def main() -> None:
+    args = parse_args()
     ensure_dirs(LOG_DIR)
 
     # Policy validáció induláskor (SPEC §13.4)
@@ -68,19 +103,49 @@ def main() -> None:
         print(str(e))
         print("\n❌ Az agent nem indul el hibás policy miatt.")
         return
+
+    # Initialize adapter
+    adapter_type = args.adapter or policy.get("adapter", "mock")
+
+    # Dry-run mode: only --live flag disables it for moltbook
+    dry_run = not args.live
+
+    try:
+        if adapter_type == "mock":
+            adapter = get_adapter(
+                "mock",
+                events_file="events.jsonl",
+                log_dir=LOG_DIR,
+                agent_name=os.environ.get("MOLTBOOK_AGENT_NAME", "MockAgent"),
+            )
+        else:
+            adapter = get_adapter(
+                "moltbook",
+                dry_run=dry_run,
+                log_dir=LOG_DIR,
+            )
+    except ValueError as e:
+        print(f"❌ Adapter hiba: {e}")
+        return
+
+    print(f"✅ Adapter: {adapter_type}")
+    print(f"   Agent: {adapter.agent_name}")
+    print(f"   Dry-run: {adapter.is_dry_run}")
+
     st = load_state()
     st = ensure_today(st)
 
-    events = load_events()
+    # Fetch events from adapter
+    events = get_events_from_adapter(adapter, limit=args.limit)
     if not events:
-        print("Missing or empty events.jsonl")
+        print("\n⚠️  Nincsenek események (üres feed vagy nincs events.jsonl)")
         return
 
     # Log input events
     for e in events:
         append_jsonl(EVENT_LOG, e)
 
-    print(f"[dry-run] loaded {len(events)} events")
+    print(f"\n[dry-run] loaded {len(events)} events")
     print(f"[dry-run] state day={st.day_key} spent=${st.spent_usd:.4f} calls={st.calls_today}")
     print(f"[dry-run] burst_p0={st.burst_used_p0} burst_p1={st.burst_used_p1} hour={st.hour_key} (UTC{TZ_HOURS:+d})")
 
@@ -196,6 +261,19 @@ def main() -> None:
         st.spent_usd += est
         save_state(st)
 
+        # Send reply through adapter
+        post_id = e.get("meta", {}).get("post_id")
+        parent_id = e.get("meta", {}).get("parent_id")
+
+        reply_sent = adapter.send_reply(
+            event_id=event_id,
+            text=reply_en,
+            post_id=post_id,
+            parent_id=parent_id,
+        )
+
+        reply_status = "SENT" if reply_sent and not adapter.is_dry_run else "LOGGED (dry-run)"
+
         # Log outbound (EN only)
         append_jsonl(OUTBOUND_LOG, {
             "event_id": event_id,
@@ -205,6 +283,7 @@ def main() -> None:
             "reply_en": reply_en,
             "usage": {"input_tokens": in_tok, "output_tokens": out_tok},
             "est_usd": est,
+            "reply_status": reply_status,
         })
 
         # Operator view (HU)
@@ -217,6 +296,7 @@ def main() -> None:
         })
 
         print(f"  [reply EN] {reply_en}")
+        print(f"  [status] {reply_status}")
         print(f"  [cost≈] +${est:.4f} → day_total≈${st.spent_usd:.4f}, calls={st.calls_today}\n")
 
     print("\n[dry-run] done.")

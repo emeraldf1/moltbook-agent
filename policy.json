@@ -1,7 +1,13 @@
 {
+  "adapter": "mock",
   "daily_budget_usd": 1.0,
   "max_calls_per_day": 200,
   "min_seconds_between_calls": 1.0,
+  "moltbook": {
+    "poll_interval_sec": 60,
+    "reply_to_posts": true,
+    "reply_to_comments": true
+  },
   "scheduler": {
     "enabled": true,
     "burst_p0": 8,

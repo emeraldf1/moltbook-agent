@@ -1,0 +1,42 @@
+[Unit]
+Description=Moltbook Agent Daemon
+Documentation=https://github.com/emeraldf1/moltbook-agent
+After=network.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=moltbook
+Group=moltbook
+WorkingDirectory=/opt/moltbook-agent
+
+# Environment
+EnvironmentFile=/opt/moltbook-agent/.env
+
+# Start command
+# FONTOS: --live flag NÉLKÜL dry-run módban fut!
+# Ha élesben akarod futtatni, add hozzá: --live
+ExecStart=/opt/moltbook-agent/.venv/bin/python /opt/moltbook-agent/agent_daemon.py
+
+# Restart policy
+Restart=always
+RestartSec=10
+
+# Security hardening
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ReadWritePaths=/opt/moltbook-agent/logs /opt/moltbook-agent/agent_state.json
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=moltbook-agent
+
+# Resource limits (Hostinger KVM1: 4GB RAM, 1 vCPU)
+MemoryMax=512M
+CPUQuota=50%
+
+[Install]
+WantedBy=multi-user.target
