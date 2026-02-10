@@ -35,6 +35,7 @@ from moltagent import (
     estimate_tokens,
     estimate_cost_usd,
 )
+from moltagent.retry import ReplyError
 from moltagent.utils import TZ_HOURS
 from moltagent.config import CHARS_PER_TOKEN_EST, USD_PER_1M_INPUT_TOKENS, USD_PER_1M_OUTPUT_TOKENS
 
@@ -58,7 +59,15 @@ def load_events(path: str = "events.jsonl") -> List[Dict[str, Any]]:
 
 def main() -> None:
     ensure_dirs(LOG_DIR)
-    policy = load_policy()
+
+    # Policy validáció induláskor (SPEC §13.4)
+    try:
+        policy = load_policy(validate=True)
+        print("✅ Policy OK")
+    except ValueError as e:
+        print(str(e))
+        print("\n❌ Az agent nem indul el hibás policy miatt.")
+        return
     st = load_state()
     st = ensure_today(st)
 
@@ -139,14 +148,42 @@ def main() -> None:
         rate_limit(policy, st)
 
         mode = decision.get("mode", "normal")
-        reply_en, in_tok, out_tok = make_outbound_reply(e, policy, mode, client)
+        event_id = e.get("id")
+
+        # API hívás error handling-gel
+        try:
+            reply_en, in_tok, out_tok = make_outbound_reply(
+                e, policy, mode, client, event_id=event_id
+            )
+        except ReplyError as err:
+            # API hiba - logoljuk és SKIP-eljük az eseményt
+            print(f"  [ERROR] {err.error_type}: {err.message}")
+            print(f"  [SKIP] Event {event_id} - API hiba után skip\n")
+
+            # Operator összefoglaló a hibáról
+            error_decision = {
+                "reply": False,
+                "reason": "api_error",
+                "priority": decision.get("priority", "P2"),
+                "error": {
+                    "type": err.error_type,
+                    "message": err.message,
+                    "retry_count": err.retry_count,
+                },
+            }
+            op = hu_operator_summary(e, error_decision)
+            append_jsonl(OPERATOR_LOG, {
+                "event_id": event_id,
+                "operator_summary_hu": op,
+                "error": err.error_type,
+            })
+            continue
 
         # Update state
         st.calls_today += 1
         st.last_call_ts = time.time()
 
         # Idempotencia: megjelöljük megválaszoltként
-        event_id = e.get("id")
         if event_id:
             st.mark_replied(event_id)
 
@@ -161,7 +198,7 @@ def main() -> None:
 
         # Log outbound (EN only)
         append_jsonl(OUTBOUND_LOG, {
-            "event_id": e.get("id"),
+            "event_id": event_id,
             "ts": e.get("ts"),
             "type": e.get("type"),
             "author": e.get("author"),
@@ -173,7 +210,7 @@ def main() -> None:
         # Operator view (HU)
         op = hu_operator_summary(e, decision, reply_en=reply_en)
         append_jsonl(OPERATOR_LOG, {
-            "event_id": e.get("id"),
+            "event_id": event_id,
             "operator_summary_hu": op,
             "day_total_est_usd": st.spent_usd,
             "calls_today": st.calls_today,

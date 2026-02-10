@@ -4,7 +4,7 @@ Tests for moltagent.decision (Reply decision logic)
 import pytest
 from unittest.mock import patch, MagicMock
 
-from moltagent.decision import should_reply, keyword_hit
+from moltagent.decision import should_reply, keyword_hit, _check_budget, _check_soft_cap
 from moltagent.state import State
 
 
@@ -232,3 +232,385 @@ class TestSchedulerIntegration:
         assert decision["reply"] is False
         assert decision["reason"] == "scheduler_paced_wait"
         assert decision["scheduler"]["wait_seconds"] == 120.0
+
+
+class TestBudgetHardCap:
+    """Tests for budget hard cap (SPEC §7)."""
+
+    def test_budget_exhausted_skip(self, base_state, base_policy):
+        """Budget elérve → SKIP budget_exhausted (AC-1)"""
+        base_policy["daily_budget_usd"] = 1.0
+        base_state.spent_usd = 1.0  # Exactly at limit
+        event = {
+            "id": "e1",
+            "text": "Tell me about agents?",
+            "meta": {},
+        }
+
+        with patch("moltagent.decision.ensure_today", return_value=base_state):
+            decision = should_reply(event, base_policy, base_state)
+
+        assert decision["reply"] is False
+        assert decision["reason"] == "budget_exhausted"
+        assert "budget" in decision
+        assert decision["budget"]["spent_usd"] == 1.0
+        assert decision["budget"]["daily_budget_usd"] == 1.0
+
+    def test_budget_over_limit_skip(self, base_state, base_policy):
+        """Budget túllépve → SKIP budget_exhausted"""
+        base_policy["daily_budget_usd"] = 1.0
+        base_state.spent_usd = 1.5  # Over limit
+        event = {
+            "id": "e1",
+            "text": "Tell me about agents?",
+            "meta": {},
+        }
+
+        with patch("moltagent.decision.ensure_today", return_value=base_state):
+            decision = should_reply(event, base_policy, base_state)
+
+        assert decision["reply"] is False
+        assert decision["reason"] == "budget_exhausted"
+
+    def test_daily_calls_cap_skip(self, base_state, base_policy):
+        """Max hívásszám elérve → SKIP daily_calls_cap (AC-2)"""
+        base_policy["max_calls_per_day"] = 100
+        base_state.calls_today = 100  # Exactly at limit
+        event = {
+            "id": "e1",
+            "text": "Tell me about agents?",
+            "meta": {},
+        }
+
+        with patch("moltagent.decision.ensure_today", return_value=base_state):
+            decision = should_reply(event, base_policy, base_state)
+
+        assert decision["reply"] is False
+        assert decision["reason"] == "daily_calls_cap"
+        assert "budget" in decision
+        assert decision["budget"]["calls_today"] == 100
+        assert decision["budget"]["max_calls_per_day"] == 100
+
+    def test_budget_info_in_decision(self, base_state, base_policy):
+        """Budget info a döntésben (AC-3)"""
+        base_policy["daily_budget_usd"] = 0.5
+        base_policy["max_calls_per_day"] = 50
+        base_state.spent_usd = 0.6
+        base_state.calls_today = 10
+        event = {
+            "id": "e1",
+            "text": "Tell me about agents?",
+            "meta": {},
+        }
+
+        with patch("moltagent.decision.ensure_today", return_value=base_state):
+            decision = should_reply(event, base_policy, base_state)
+
+        assert decision["reply"] is False
+        assert "budget" in decision
+        budget = decision["budget"]
+        assert budget["spent_usd"] == 0.6
+        assert budget["daily_budget_usd"] == 0.5
+        assert budget["calls_today"] == 10
+        assert budget["max_calls_per_day"] == 50
+
+    def test_budget_priority_preserved_p0(self, base_state, base_policy):
+        """P0 esemény budget SKIP-nél is P0 marad (AC-4)"""
+        base_policy["daily_budget_usd"] = 0.01
+        base_state.spent_usd = 1.0
+        event = {
+            "id": "e1",
+            "text": "@agent help!",
+            "meta": {"mentions_me": True},
+        }
+
+        with patch("moltagent.decision.ensure_today", return_value=base_state):
+            decision = should_reply(event, base_policy, base_state)
+
+        assert decision["reply"] is False
+        assert decision["reason"] == "budget_exhausted"
+        assert decision["priority"] == "P0"  # Priority preserved!
+
+    def test_budget_priority_preserved_p1(self, base_state, base_policy):
+        """P1 esemény budget SKIP-nél is P1 marad"""
+        base_policy["daily_budget_usd"] = 0.01
+        base_state.spent_usd = 1.0
+        event = {
+            "id": "e1",
+            "text": "How do I set a rate limit?",
+            "meta": {"is_question": True},
+        }
+
+        with patch("moltagent.decision.ensure_today", return_value=base_state):
+            decision = should_reply(event, base_policy, base_state)
+
+        assert decision["reply"] is False
+        assert decision["reason"] == "budget_exhausted"
+        assert decision["priority"] == "P1"  # Priority preserved!
+
+    def test_dedup_before_budget(self, base_state, base_policy):
+        """Duplicate event előbb fut mint budget check (AC-5)"""
+        base_policy["daily_budget_usd"] = 0.01
+        base_state.spent_usd = 1.0  # Budget exhausted
+        base_state.replied_event_ids = {"e1"}  # Already replied
+        event = {
+            "id": "e1",
+            "text": "Tell me about agents?",
+            "meta": {},
+        }
+
+        with patch("moltagent.decision.ensure_today", return_value=base_state):
+            decision = should_reply(event, base_policy, base_state)
+
+        # Dedup should win over budget
+        assert decision["reply"] is False
+        assert decision["reason"] == "duplicate_event"
+
+    def test_budget_before_scheduler(self, base_state, base_policy):
+        """Budget check előbb fut mint scheduler (AC-6)"""
+        base_policy["daily_budget_usd"] = 0.01
+        base_policy["scheduler"]["enabled"] = True
+        base_state.spent_usd = 1.0  # Budget exhausted
+        event = {
+            "id": "e1",
+            "text": "Tell me about agents?",
+            "meta": {},
+        }
+
+        # Scheduler should not even be called if budget is exhausted
+        with patch("moltagent.decision.ensure_today", return_value=base_state):
+            with patch("moltagent.decision.scheduler_check") as mock_sched:
+                decision = should_reply(event, base_policy, base_state)
+                # Scheduler should NOT be called
+                mock_sched.assert_not_called()
+
+        assert decision["reply"] is False
+        assert decision["reason"] == "budget_exhausted"
+
+    def test_budget_ok_allows_reply(self, base_state, base_policy):
+        """Budget OK → valid reply allowed"""
+        base_policy["daily_budget_usd"] = 10.0
+        base_policy["max_calls_per_day"] = 200
+        base_state.spent_usd = 0.5
+        base_state.calls_today = 10
+        event = {
+            "id": "e1",
+            "text": "Tell me about agents?",
+            "meta": {},
+        }
+
+        with patch("moltagent.decision.ensure_today", return_value=base_state):
+            decision = should_reply(event, base_policy, base_state)
+
+        assert decision["reply"] is True
+        assert decision["reason"] == "relevant_question"
+
+    def test_check_budget_helper_exhausted(self, base_state, base_policy):
+        """_check_budget helper: budget exhausted"""
+        base_policy["daily_budget_usd"] = 1.0
+        base_state.spent_usd = 1.5
+
+        result = _check_budget(base_state, base_policy, "P1")
+
+        assert result is not None
+        assert result["reason"] == "budget_exhausted"
+        assert result["priority"] == "P1"
+
+    def test_check_budget_helper_calls_cap(self, base_state, base_policy):
+        """_check_budget helper: calls cap reached"""
+        base_policy["max_calls_per_day"] = 50
+        base_state.calls_today = 50
+
+        result = _check_budget(base_state, base_policy, "P2")
+
+        assert result is not None
+        assert result["reason"] == "daily_calls_cap"
+        assert result["priority"] == "P2"
+
+    def test_check_budget_helper_ok(self, base_state, base_policy):
+        """_check_budget helper: budget OK returns None"""
+        base_policy["daily_budget_usd"] = 10.0
+        base_policy["max_calls_per_day"] = 200
+        base_state.spent_usd = 1.0
+        base_state.calls_today = 50
+
+        result = _check_budget(base_state, base_policy, "P0")
+
+        assert result is None
+
+
+class TestBudgetSoftCap:
+    """Tests for budget soft cap (SPEC §7b)."""
+
+    def test_soft_cap_blocks_p2_at_80_percent(self, base_state, base_policy):
+        """P2 SKIP 80% felett (AC-1)"""
+        base_policy["daily_budget_usd"] = 1.0
+        base_state.spent_usd = 0.80  # Exactly at 80%
+        event = {
+            "id": "e1",
+            "text": "Budget stuff.",  # P2 (relevant statement)
+            "meta": {},
+        }
+
+        with patch("moltagent.decision.ensure_today", return_value=base_state):
+            decision = should_reply(event, base_policy, base_state)
+
+        assert decision["reply"] is False
+        assert decision["reason"] == "soft_cap_p2_blocked"
+        assert decision["priority"] == "P2"
+        assert decision["budget"]["soft_cap_percentage"] == 0.80
+
+    def test_soft_cap_allows_p0_at_80_percent(self, base_state, base_policy):
+        """P0 átmegy 80% felett (AC-2)"""
+        base_policy["daily_budget_usd"] = 1.0
+        base_state.spent_usd = 0.80  # At 80%
+        event = {
+            "id": "e1",
+            "text": "@agent help with budget!",
+            "meta": {"mentions_me": True},
+        }
+
+        # Scheduler mock (engedélyez)
+        mock_sched = MagicMock()
+        mock_sched.allowed = True
+        mock_sched.reason = "scheduler_within_pace"
+        mock_sched.used_burst = False
+        mock_sched.burst_type = None
+
+        with patch("moltagent.decision.ensure_today", return_value=base_state):
+            with patch("moltagent.decision.scheduler_check", return_value=mock_sched):
+                decision = should_reply(event, base_policy, base_state)
+
+        assert decision["reply"] is True
+        assert decision["priority"] == "P0"
+
+    def test_soft_cap_allows_p1_at_80_percent(self, base_state, base_policy):
+        """P1 átmegy 80% felett (AC-3)"""
+        base_policy["daily_budget_usd"] = 1.0
+        base_state.spent_usd = 0.85  # Over 80%
+        event = {
+            "id": "e1",
+            "text": "How do I set a budget?",  # P1 (relevant question)
+            "meta": {"is_question": True},
+        }
+
+        # Scheduler mock
+        mock_sched = MagicMock()
+        mock_sched.allowed = True
+        mock_sched.reason = "scheduler_within_pace"
+        mock_sched.used_burst = False
+        mock_sched.burst_type = None
+
+        with patch("moltagent.decision.ensure_today", return_value=base_state):
+            with patch("moltagent.decision.scheduler_check", return_value=mock_sched):
+                decision = should_reply(event, base_policy, base_state)
+
+        assert decision["reply"] is True
+        assert decision["priority"] == "P1"
+
+    def test_soft_cap_allows_p2_below_80_percent(self, base_state, base_policy):
+        """P2 átmegy 80% alatt (AC-4)"""
+        base_policy["daily_budget_usd"] = 1.0
+        base_state.spent_usd = 0.79  # Just below 80%
+        event = {
+            "id": "e1",
+            "text": "Budget stuff.",  # P2 (relevant statement)
+            "meta": {},
+        }
+
+        with patch("moltagent.decision.ensure_today", return_value=base_state):
+            decision = should_reply(event, base_policy, base_state)
+
+        assert decision["reply"] is True
+        assert decision["priority"] == "P2"
+
+    def test_soft_cap_budget_info_in_decision(self, base_state, base_policy):
+        """Budget info tartalmazza: soft_cap_threshold, soft_cap_percentage (AC-5)"""
+        base_policy["daily_budget_usd"] = 2.0
+        base_state.spent_usd = 1.60  # 80% of 2.0
+        event = {
+            "id": "e1",
+            "text": "Budget stuff.",
+            "meta": {},
+        }
+
+        with patch("moltagent.decision.ensure_today", return_value=base_state):
+            decision = should_reply(event, base_policy, base_state)
+
+        assert decision["reply"] is False
+        assert decision["reason"] == "soft_cap_p2_blocked"
+        budget = decision["budget"]
+        assert budget["spent_usd"] == 1.60
+        assert budget["daily_budget_usd"] == 2.0
+        assert budget["soft_cap_threshold"] == 1.60
+        assert budget["soft_cap_percentage"] == 0.80
+
+    def test_hard_cap_before_soft_cap(self, base_state, base_policy):
+        """Hard cap (100%) előbb fut → budget_exhausted reason (AC-6)"""
+        base_policy["daily_budget_usd"] = 1.0
+        base_state.spent_usd = 1.0  # 100% - hard cap
+        event = {
+            "id": "e1",
+            "text": "Budget stuff.",  # P2
+            "meta": {},
+        }
+
+        with patch("moltagent.decision.ensure_today", return_value=base_state):
+            decision = should_reply(event, base_policy, base_state)
+
+        assert decision["reply"] is False
+        # Hard cap reason, NOT soft cap
+        assert decision["reason"] == "budget_exhausted"
+
+    def test_soft_cap_priority_preserved(self, base_state, base_policy):
+        """Priority megőrződik a SKIP döntésben (AC-7)"""
+        base_policy["daily_budget_usd"] = 1.0
+        base_state.spent_usd = 0.90  # Over 80%
+        event = {
+            "id": "e1",
+            "text": "Budget stuff.",  # P2
+            "meta": {},
+        }
+
+        with patch("moltagent.decision.ensure_today", return_value=base_state):
+            decision = should_reply(event, base_policy, base_state)
+
+        assert decision["priority"] == "P2"  # Priority preserved
+
+    def test_check_soft_cap_helper_blocks_p2(self, base_state, base_policy):
+        """_check_soft_cap helper: blocks P2 at 80%"""
+        base_policy["daily_budget_usd"] = 1.0
+        base_state.spent_usd = 0.80
+
+        result = _check_soft_cap(base_state, base_policy, "P2")
+
+        assert result is not None
+        assert result["reason"] == "soft_cap_p2_blocked"
+        assert result["priority"] == "P2"
+
+    def test_check_soft_cap_helper_allows_p0(self, base_state, base_policy):
+        """_check_soft_cap helper: allows P0 at 80%"""
+        base_policy["daily_budget_usd"] = 1.0
+        base_state.spent_usd = 0.90
+
+        result = _check_soft_cap(base_state, base_policy, "P0")
+
+        assert result is None  # P0 always passes
+
+    def test_check_soft_cap_helper_allows_p1(self, base_state, base_policy):
+        """_check_soft_cap helper: allows P1 at 80%"""
+        base_policy["daily_budget_usd"] = 1.0
+        base_state.spent_usd = 0.95
+
+        result = _check_soft_cap(base_state, base_policy, "P1")
+
+        assert result is None  # P1 always passes
+
+    def test_check_soft_cap_helper_ok_below_80(self, base_state, base_policy):
+        """_check_soft_cap helper: allows P2 below 80%"""
+        base_policy["daily_budget_usd"] = 1.0
+        base_state.spent_usd = 0.50
+
+        result = _check_soft_cap(base_state, base_policy, "P2")
+
+        assert result is None

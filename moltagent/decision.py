@@ -1,9 +1,9 @@
 """
-Döntési logika: should_reply + scheduler integráció.
+Döntési logika: should_reply + scheduler integráció + budget hard cap.
 """
 from __future__ import annotations
 
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from .scheduler import scheduler_check, update_burst_counters, SchedulerDecision
 from .state import State, ensure_today
@@ -12,6 +12,89 @@ from .state import State, ensure_today
 def keyword_hit(text_lower: str, keywords: list[str]) -> bool:
     """Ellenőrzi, hogy a szöveg tartalmaz-e bármelyik kulcsszót."""
     return any(k in text_lower for k in keywords)
+
+
+def _check_budget(
+    state: State,
+    policy: Dict[str, Any],
+    priority: str,
+) -> Optional[Dict[str, Any]]:
+    """
+    Ellenőrzi a napi költségkeretet és hívásszám limitet.
+
+    SPEC §7: Költségkontroll - Kemény limitek (100%)
+    - Ha spent_today_usd >= daily_budget_usd: SKIP (budget_exhausted)
+    - Ha calls_today >= max_calls_per_day: SKIP (daily_calls_cap)
+
+    Returns:
+        None ha OK, egyébként SKIP döntés dict.
+    """
+    daily_budget = float(policy.get("daily_budget_usd", 1.0))
+    max_calls = int(policy.get("max_calls_per_day", 200))
+
+    budget_info = {
+        "spent_usd": state.spent_usd,
+        "daily_budget_usd": daily_budget,
+        "calls_today": state.calls_today,
+        "max_calls_per_day": max_calls,
+    }
+
+    # USD limit ellenőrzés
+    if state.spent_usd >= daily_budget:
+        return {
+            "reply": False,
+            "priority": priority,
+            "reason": "budget_exhausted",
+            "budget": budget_info,
+        }
+
+    # Hívásszám limit ellenőrzés
+    if state.calls_today >= max_calls:
+        return {
+            "reply": False,
+            "priority": priority,
+            "reason": "daily_calls_cap",
+            "budget": budget_info,
+        }
+
+    return None
+
+
+def _check_soft_cap(
+    state: State,
+    policy: Dict[str, Any],
+    priority: str,
+) -> Optional[Dict[str, Any]]:
+    """
+    Ellenőrzi a 80%-os soft cap-et.
+
+    SPEC §7b: 80% felett csak P0/P1 engedélyezett.
+    P2 események SKIP-elődnek, hogy a fontos események még kaphassanak választ.
+
+    Returns:
+        None ha OK, egyébként SKIP döntés dict.
+    """
+    # P0/P1 mindig átmegy a soft cap-en
+    if priority in ("P0", "P1"):
+        return None
+
+    daily_budget = float(policy.get("daily_budget_usd", 1.0))
+    soft_cap_threshold = daily_budget * 0.80
+
+    if state.spent_usd >= soft_cap_threshold:
+        return {
+            "reply": False,
+            "priority": priority,
+            "reason": "soft_cap_p2_blocked",
+            "budget": {
+                "spent_usd": state.spent_usd,
+                "daily_budget_usd": daily_budget,
+                "soft_cap_threshold": soft_cap_threshold,
+                "soft_cap_percentage": 0.80,
+            },
+        }
+
+    return None
 
 
 def should_reply(
@@ -23,9 +106,10 @@ def should_reply(
     """
     Eldönti, hogy válaszoljon-e az agent.
 
-    A döntés lépései:
+    A döntés lépései (SPEC §4 pipeline):
     0. Idempotencia ellenőrzés (duplicate_event)
-    1. Alapvető szabályok (blocked keywords, mentions, questions, relevance)
+    1. Prioritás meghatározása (blocked keywords, mentions, questions, relevance)
+    1.5. Budget ellenőrzés (SPEC §7 - budget_exhausted, daily_calls_cap)
     2. Scheduler ellenőrzés (Daily Pacer)
     3. P2 hourly cap
 
@@ -118,6 +202,16 @@ def should_reply(
         }
     else:
         return {"reply": False, "priority": "P2", "reason": "not_relevant"}
+
+    # --- 1.5 fázis: Budget ellenőrzés (SPEC §7) ---
+    budget_skip = _check_budget(state, policy, priority)
+    if budget_skip:
+        return budget_skip
+
+    # --- 1.6 fázis: Soft cap (SPEC §7b) ---
+    soft_cap_skip = _check_soft_cap(state, policy, priority)
+    if soft_cap_skip:
+        return soft_cap_skip
 
     # --- 2. fázis: Scheduler ellenőrzés ---
     sched_decision: SchedulerDecision = scheduler_check(

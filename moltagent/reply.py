@@ -1,14 +1,25 @@
 """
 Kimenő válasz generálás (EN only) - OpenAI API hívás.
+
+Error handling és retry logika integrálva.
 """
 from __future__ import annotations
 
 import time
-from typing import Any, Dict, Tuple
+from typing import Any, Dict, Optional, Tuple
 
 from openai import OpenAI
 
-from .config import MAX_OUTPUT_TOKENS, MODEL, REASONING_EFFORT, TIMEOUT_SECONDS
+from .config import (
+    MAX_OUTPUT_TOKENS,
+    MODEL,
+    REASONING_EFFORT,
+    TIMEOUT_SECONDS,
+    MAX_RETRIES,
+    RETRY_BASE_DELAY,
+    RETRY_MAX_DELAY,
+)
+from .retry import call_with_retry, ReplyError, log_error
 from .state import State
 
 
@@ -92,21 +103,21 @@ def rate_limit(policy: Dict[str, Any], state: State) -> None:
         time.sleep(min_s - elapsed)
 
 
-def make_outbound_reply(
-    event: Dict[str, Any],
-    policy: Dict[str, Any],
-    mode: str,
+def _call_openai_api(
     client: OpenAI,
-) -> Tuple[str, int, int]:
+    prompt: str,
+) -> Any:
     """
-    Generál egy angol választ az OpenAI API-val.
+    Nyers OpenAI API hívás (retry wrapper-hez).
+
+    Args:
+        client: OpenAI kliens
+        prompt: A prompt
 
     Returns:
-        (reply_text, input_tokens, output_tokens)
+        OpenAI response objektum
     """
-    prompt = build_prompt(event, policy, mode)
-
-    r = client.responses.create(
+    return client.responses.create(
         model=MODEL,
         input=prompt,
         reasoning={"effort": REASONING_EFFORT},
@@ -114,9 +125,53 @@ def make_outbound_reply(
         timeout=TIMEOUT_SECONDS,
     )
 
+
+def make_outbound_reply(
+    event: Dict[str, Any],
+    policy: Dict[str, Any],
+    mode: str,
+    client: OpenAI,
+    event_id: Optional[str] = None,
+) -> Tuple[str, int, int]:
+    """
+    Generál egy angol választ az OpenAI API-val.
+
+    Error handling és retry logika integrálva.
+
+    Args:
+        event: Az esemény
+        policy: Policy konfiguráció
+        mode: "normal" | "redirect" | "refuse"
+        client: OpenAI kliens
+        event_id: Event ID a logoláshoz (opcionális)
+
+    Returns:
+        (reply_text, input_tokens, output_tokens)
+
+    Raises:
+        ReplyError: Ha az API hívás minden retry után is sikertelen
+    """
+    prompt = build_prompt(event, policy, mode)
+
+    # Event ID kinyerése ha nincs megadva
+    if event_id is None:
+        event_id = event.get("id")
+
+    # API hívás retry logikával
+    r = call_with_retry(
+        _call_openai_api,
+        client,
+        prompt,
+        max_retries=MAX_RETRIES,
+        base_delay=RETRY_BASE_DELAY,
+        max_delay=RETRY_MAX_DELAY,
+        event_id=event_id,
+    )
+
     text = extract_text(r) or "[no_text]"
     usage = getattr(r, "usage", None)
     in_tok = int(getattr(usage, "input_tokens", 0) or 0) if usage else 0
     out_tok = int(getattr(usage, "output_tokens", 0) or 0) if usage else 0
 
+    # Sikeres hívás logolása (opcionális - csak ha volt retry)
     return text, in_tok, out_tok

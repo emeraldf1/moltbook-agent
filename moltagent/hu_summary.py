@@ -207,6 +207,14 @@ def hu_operator_summary(
         orig_id = decision.get("original_event_id", event.get("id"))
         lines.append(f"Idempotencia: már válaszoltunk erre az eseményre ({orig_id})")
 
+    # Budget info ha van (SPEC §7)
+    budget = decision.get("budget")
+    if budget:
+        if reason == "budget_exhausted":
+            lines.append(f"Budget: LIMIT ELÉRVE - elköltött: ${budget['spent_usd']:.4f} / ${budget['daily_budget_usd']:.2f}")
+        elif reason == "daily_calls_cap":
+            lines.append(f"Budget: HÍVÁSSZÁM LIMIT - hívások: {budget['calls_today']} / {budget['max_calls_per_day']}")
+
     # Scheduler info ha van
     sched = decision.get("scheduler")
     if sched:

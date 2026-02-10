@@ -40,3 +40,11 @@ DEFAULT_MAX_CALLS_PER_DAY = 200
 DEFAULT_BURST_P0 = 8
 DEFAULT_BURST_P1 = 4
 DAY_SECONDS = 24 * 60 * 60  # 86400
+
+# -------------------------
+# RETRY CONFIG
+# -------------------------
+MAX_RETRIES = 3  # Maximum retry attempts
+RETRY_BASE_DELAY = 1.0  # Base delay in seconds
+RETRY_MAX_DELAY = 30.0  # Maximum delay in seconds
+ERROR_LOG = os.path.join(LOG_DIR, "errors.jsonl")

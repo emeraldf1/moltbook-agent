@@ -28,6 +28,7 @@ from .policy import load_policy, get_scheduler_config
 from .scheduler import scheduler_check, SchedulerDecision, update_burst_counters
 from .decision import should_reply
 from .reply import make_outbound_reply, build_prompt, rate_limit
+from .retry import ReplyError, call_with_retry, log_error
 from .hu_summary import hu_event_gist, summarize_en_to_hu_cheap, hu_operator_summary
 from .utils import (
     now_local,
@@ -67,6 +68,10 @@ __all__ = [
     "make_outbound_reply",
     "build_prompt",
     "rate_limit",
+    # retry
+    "ReplyError",
+    "call_with_retry",
+    "log_error",
     # hu_summary
     "hu_event_gist",
     "summarize_en_to_hu_cheap",

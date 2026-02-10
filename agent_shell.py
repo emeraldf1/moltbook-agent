@@ -93,8 +93,21 @@ Parancsok:
   clear logs
     - törli a logs/ alatti jsonl logokat
 
+  clear counters
+    - törli a napi/órás számlálókat (calls, spent, burst, p2hour)
+    - NEM törli a dedup listát (replied_event_ids)
+
+  clear dedup
+    - törli a dedup listát (replied_event_ids)
+    - megerősítést kér (veszélyes művelet!)
+    - NEM törli a számlálókat
+
+  clear all
+    - törli az ÖSSZES állapotot (számlálók + dedup)
+    - DUPLA megerősítést kér!
+
   clear state
-    - törli az agent_state.json-t (napi counters reset)
+    - DEPRECATED: használd helyette: clear counters | clear dedup | clear all
 
   show policy
     - kiírja a policy.json teljes tartalmát
@@ -197,8 +210,21 @@ def _ensure_policy() -> Dict[str, Any]:
 
 
 def _show_policy() -> None:
-    pol = _ensure_policy()
-    _print_card("POLICY (policy.json)", json.dumps(pol, ensure_ascii=False, indent=2))
+    """AC-9: show policy mutatja a validált értékeket."""
+    try:
+        from moltagent.policy import load_policy, get_validation_message
+        # Validált policy (beleértve a default-okat)
+        pol = load_policy(POLICY_FILE, validate=True)
+        validation_msg = get_validation_message(POLICY_FILE)
+
+        body = validation_msg + "\n\n" + json.dumps(pol, ensure_ascii=False, indent=2)
+        _print_card("POLICY (validált)", body)
+    except ValueError as e:
+        _print_card("POLICY HIBA", str(e))
+    except ImportError:
+        # Fallback ha nincs moltagent
+        pol = _ensure_policy()
+        _print_card("POLICY (policy.json)", json.dumps(pol, ensure_ascii=False, indent=2))
 
 
 def _set_policy_field(field: str, value: str) -> None:
@@ -394,11 +420,217 @@ def _clear_logs() -> None:
 
 
 def _clear_state() -> None:
-    if _exists(STATE_FILE):
-        os.remove(STATE_FILE)
-        _print_card("CLEAR STATE", f"Deleted {STATE_FILE}")
-    else:
-        _print_card("CLEAR STATE", f"{STATE_FILE} not found")
+    """DEPRECATED: Használd helyette: clear counters | clear dedup | clear all"""
+    _print_card("DEPRECATED",
+        "A 'clear state' parancs deprecated.\n\n"
+        "Használd helyette:\n"
+        "  clear counters  - csak számlálók törlése\n"
+        "  clear dedup     - csak dedup lista törlése (megerősítéssel)\n"
+        "  clear all       - minden törlése (dupla megerősítéssel)")
+
+
+def _confirm(prompt: str) -> bool:
+    """Megerősítés kérése a felhasználótól."""
+    try:
+        response = input(prompt).strip().lower()
+        return response == "yes"
+    except (EOFError, KeyboardInterrupt):
+        print("\nMegszakítva.")
+        return False
+
+
+def _confirm_double(first_prompt: str, second_prompt: str) -> bool:
+    """Dupla megerősítés kérése."""
+    try:
+        # Első megerősítés
+        response1 = input(first_prompt).strip().lower()
+        if response1 != "yes":
+            print("Megszakítva (első megerősítés sikertelen).")
+            return False
+
+        # Második megerősítés
+        response2 = input(second_prompt).strip()
+        if response2 != "CONFIRM":
+            print("Megszakítva (második megerősítés sikertelen).")
+            return False
+
+        return True
+    except (EOFError, KeyboardInterrupt):
+        print("\nMegszakítva.")
+        return False
+
+
+def _get_current_day_hour() -> tuple:
+    """Visszaadja az aktuális day_key és hour_key értékeket."""
+    now = datetime.now()
+    day_key = now.strftime("%Y-%m-%d")
+    hour_key = now.strftime("%Y-%m-%d-%H")
+    return day_key, hour_key
+
+
+def _clear_counters() -> None:
+    """
+    Törli a napi/órás számlálókat, DE megtartja a dedup listát.
+    SPEC §14.5 - clear counters
+    """
+    if not _exists(STATE_FILE):
+        _print_card("CLEAR COUNTERS", "Nincs state fájl, nincs mit törölni.")
+        return
+
+    st = _load_state()
+    day_key, hour_key = _get_current_day_hour()
+
+    # Régi értékek megőrzése a visszajelzéshez
+    old_values = {
+        "calls_today": st.get("calls_today", 0),
+        "spent_usd": st.get("spent_usd", 0.0),
+        "burst_used_p0": st.get("burst_used_p0", 0),
+        "burst_used_p1": st.get("burst_used_p1", 0),
+        "p2_replies_this_hour": st.get("p2_replies_this_hour", 0),
+        "last_call_ts": st.get("last_call_ts", 0.0),
+    }
+
+    # Dedup lista megtartása
+    replied_ids = st.get("replied_event_ids", [])
+
+    # Új state létrehozása
+    new_state = {
+        "day_key": day_key,
+        "hour_key": hour_key,
+        "calls_today": 0,
+        "spent_usd": 0.0,
+        "burst_used_p0": 0,
+        "burst_used_p1": 0,
+        "p2_replies_this_hour": 0,
+        "last_call_ts": 0.0,
+        "replied_event_ids": replied_ids,
+    }
+
+    # Mentés
+    with open(STATE_FILE, "w", encoding="utf-8") as f:
+        json.dump(new_state, f, indent=2)
+
+    # Visszajelzés
+    lines = [
+        "Törölve:",
+        f"  - calls_today: {old_values['calls_today']} → 0",
+        f"  - spent_usd: {old_values['spent_usd']:.4f} → 0.0",
+        f"  - burst_used_p0: {old_values['burst_used_p0']} → 0",
+        f"  - burst_used_p1: {old_values['burst_used_p1']} → 0",
+        f"  - p2_replies_this_hour: {old_values['p2_replies_this_hour']} → 0",
+        f"  - last_call_ts: {old_values['last_call_ts']:.1f} → 0.0",
+        "",
+        "Megtartva:",
+        f"  - replied_event_ids: {len(replied_ids)} elem",
+        "",
+        f"State mentve: {STATE_FILE}",
+    ]
+    _print_card("CLEAR COUNTERS", "\n".join(lines))
+
+
+def _clear_dedup() -> None:
+    """
+    Törli a dedup listát, megerősítéssel.
+    SPEC §14.5 - clear dedup
+    """
+    if not _exists(STATE_FILE):
+        _print_card("CLEAR DEDUP", "Nincs state fájl, nincs mit törölni.")
+        return
+
+    st = _load_state()
+    replied_ids = st.get("replied_event_ids", [])
+
+    if not replied_ids:
+        _print_card("CLEAR DEDUP", "A dedup lista már üres.")
+        return
+
+    # Megerősítés kérése
+    print("\n" + "=" * 80)
+    print("FIGYELEM: Ez törli a dedup listát!")
+    print(f"Jelenleg {len(replied_ids)} elem van a listában.")
+    print("Az agent újra válaszolhat korábban megválaszolt eseményekre.")
+    print("-" * 80)
+
+    if not _confirm("Biztosan folytatod? (yes/no): "):
+        _print_card("CLEAR DEDUP", "Művelet megszakítva.")
+        return
+
+    # Dedup lista törlése, számlálók megtartása
+    st["replied_event_ids"] = []
+
+    # Mentés
+    with open(STATE_FILE, "w", encoding="utf-8") as f:
+        json.dump(st, f, indent=2)
+
+    # Visszajelzés
+    lines = [
+        "Törölve:",
+        f"  - replied_event_ids: {len(replied_ids)} elem → 0 elem",
+        "",
+        "Megtartva:",
+        f"  - calls_today: {st.get('calls_today', 0)}",
+        f"  - spent_usd: {st.get('spent_usd', 0.0):.4f}",
+        f"  - burst_used_p0: {st.get('burst_used_p0', 0)}",
+        f"  - burst_used_p1: {st.get('burst_used_p1', 0)}",
+        "",
+        f"State mentve: {STATE_FILE}",
+    ]
+    _print_card("CLEAR DEDUP", "\n".join(lines))
+
+
+def _clear_all() -> None:
+    """
+    Törli az összes állapotot, dupla megerősítéssel.
+    SPEC §14.5 - clear all
+    """
+    if not _exists(STATE_FILE):
+        _print_card("CLEAR ALL", "Nincs state fájl, nincs mit törölni.")
+        return
+
+    st = _load_state()
+    replied_ids = st.get("replied_event_ids", [])
+
+    # Dupla megerősítés kérése
+    print("\n" + "=" * 80)
+    print("FIGYELEM: Ez törli az ÖSSZES állapotot!")
+    print(f"  - Számlálók: calls={st.get('calls_today', 0)}, spent=${st.get('spent_usd', 0.0):.4f}")
+    print(f"  - Dedup lista: {len(replied_ids)} elem")
+    print("Ez NEM visszavonható művelet!")
+    print("-" * 80)
+
+    if not _confirm_double(
+        "Első megerősítés - Írd be 'yes': ",
+        "Második megerősítés - Írd be 'CONFIRM': "
+    ):
+        _print_card("CLEAR ALL", "Művelet megszakítva.")
+        return
+
+    # Régi értékek megőrzése a visszajelzéshez
+    old_values = {
+        "calls_today": st.get("calls_today", 0),
+        "spent_usd": st.get("spent_usd", 0.0),
+        "burst_used_p0": st.get("burst_used_p0", 0),
+        "burst_used_p1": st.get("burst_used_p1", 0),
+        "p2_replies_this_hour": st.get("p2_replies_this_hour", 0),
+        "replied_count": len(replied_ids),
+    }
+
+    # State fájl törlése
+    os.remove(STATE_FILE)
+
+    # Visszajelzés
+    lines = [
+        "MINDEN TÖRÖLVE:",
+        f"  - calls_today: {old_values['calls_today']} → (törölve)",
+        f"  - spent_usd: {old_values['spent_usd']:.4f} → (törölve)",
+        f"  - burst_used_p0: {old_values['burst_used_p0']} → (törölve)",
+        f"  - burst_used_p1: {old_values['burst_used_p1']} → (törölve)",
+        f"  - p2_replies_this_hour: {old_values['p2_replies_this_hour']} → (törölve)",
+        f"  - replied_event_ids: {old_values['replied_count']} elem → (törölve)",
+        "",
+        f"State fájl törölve: {STATE_FILE}",
+    ]
+    _print_card("CLEAR ALL", "\n".join(lines))
 
 
 def _edit_file(path: str) -> None:
@@ -419,7 +651,36 @@ def shutil_which(cmd: str) -> Optional[str]:
     return None
 
 
+def _validate_policy_on_startup() -> bool:
+    """
+    Policy validáció induláskor.
+    SPEC §13.4 - Policy érvényesítés.
+
+    Returns:
+        True ha a policy érvényes, False egyébként
+    """
+    try:
+        from moltagent.policy import get_validation_message, validate_policy
+        success, model, errors = validate_policy(POLICY_FILE)
+        msg = get_validation_message(POLICY_FILE)
+        _print_card("POLICY VALIDÁCIÓ", msg)
+        return success
+    except ImportError:
+        # Ha a moltagent modul nem elérhető, skip
+        _print_card("POLICY", f"Policy modul nem elérhető, validáció kihagyva.")
+        return True
+    except Exception as e:
+        _print_card("POLICY HIBA", f"Váratlan hiba: {e}")
+        return False
+
+
 def repl() -> None:
+    # Policy validáció induláskor
+    if not _validate_policy_on_startup():
+        print("\n❌ Az agent nem indul el hibás policy miatt.")
+        print("Javítsd ki a policy.json fájlt és próbáld újra.\n")
+        return
+
     _print_card("agent_shell", "Készen áll.\nÍrd be: help")
 
     while True:
@@ -501,8 +762,17 @@ def repl() -> None:
             if what == "logs":
                 _clear_logs()
                 continue
+            if what == "counters":
+                _clear_counters()
+                continue
+            if what == "dedup":
+                _clear_dedup()
+                continue
+            if what == "all":
+                _clear_all()
+                continue
             if what == "state":
-                _clear_state()
+                _clear_state()  # Deprecated
                 continue
 
         if cmd == "edit" and len(parts) >= 2:
