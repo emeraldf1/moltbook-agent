@@ -67,5 +67,15 @@
   "operator": {
     "language": "hu",
     "verbosity": "short"
+  },
+  "proactive_posts": {
+    "enabled": false,
+    "max_posts_per_day": 1,
+    "post_hour_utc": 9,
+    "topics": [
+      "What are the best practices for Moltbook agent cost control?",
+      "How do you handle rate limits in your Moltbook agent setup?",
+      "Tips for debugging Moltbook agent API integration issues"
+    ]
   }
 }

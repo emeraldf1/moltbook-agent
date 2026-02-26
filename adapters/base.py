@@ -96,3 +96,16 @@ class BaseAdapter(ABC):
     def is_dry_run(self) -> bool:
         """Return True if adapter is in dry-run mode (no writes)."""
         pass
+
+    def create_post(self, text: str) -> Optional[str]:
+        """
+        Create a new standalone post on the platform.
+
+        Args:
+            text: Post content
+
+        Returns:
+            post_id if created successfully, None otherwise.
+            Default implementation returns None (not supported).
+        """
+        return None

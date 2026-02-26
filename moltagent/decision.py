@@ -144,6 +144,46 @@ def should_reply(
     allow_kw = [k.lower() for k in policy.get("topics", {}).get("allow_keywords", [])]
     block_kw = [k.lower() for k in policy.get("topics", {}).get("block_keywords", [])]
 
+    # --- 0.5 fázis: Saját proaktív poszt kommentje → automatikus prioritás ---
+    event_post_id = meta.get("post_id") or event.get("post_id")
+    if event_post_id and event_post_id in state.proactive_post_ids:
+        # Blocked keyword még itt is érvényes (biztonság)
+        if keyword_hit(text_lower, block_kw):
+            return {
+                "reply": False,
+                "priority": "P2",
+                "reason": "blocked_keyword_skip",
+            }
+        priority = "P0" if mentions_me else "P1"
+        base_decision = {
+            "reply": True,
+            "priority": priority,
+            "reason": "own_post_reply",
+            "mode": "normal",
+        }
+        # Budget ellenőrzés (P0/P1 átmegy soft cap-en)
+        budget_skip = _check_budget(state, policy, priority)
+        if budget_skip:
+            return budget_skip
+        # Scheduler ellenőrzés
+        sched_decision: SchedulerDecision = scheduler_check(
+            state=state, priority=priority, policy=policy, dry_run=dry_run,
+        )
+        if not sched_decision.allowed:
+            return {
+                "reply": False,
+                "priority": priority,
+                "reason": sched_decision.reason,
+                "scheduler": {"wait_seconds": sched_decision.wait_seconds},
+            }
+        update_burst_counters(state, sched_decision)
+        base_decision["scheduler"] = {
+            "reason": sched_decision.reason,
+            "used_burst": sched_decision.used_burst,
+            "burst_type": sched_decision.burst_type,
+        }
+        return base_decision
+
     # --- 1. fázis: Alapvető döntés (priority meghatározása) ---
 
     # Blocked keyword → SKIP (ne spameljük az elutasításokat)

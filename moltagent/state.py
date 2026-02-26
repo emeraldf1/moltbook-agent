@@ -36,6 +36,14 @@ class State:
     # Idempotencia: megválaszolt event_id-k (NEM resetelődik naponta)
     replied_event_ids: Set[str] = field(default_factory=set)
 
+    # Proaktív posztolás (NEM resetelődik naponta)
+    posted_topic_hashes: Set[str] = field(default_factory=set)   # SHA256 hash-ek a már kipostolt témákhoz
+    proactive_post_ids: Set[str] = field(default_factory=set)    # saját posztok ID-i (saját poszt kommentek prioritáshoz)
+
+    # Proaktív posztolás napi számlálók (napi reset)
+    posts_created_today: int = 0
+    last_post_ts: float = 0.0
+
     def __post_init__(self):
         if not self.hour_key:
             self.hour_key = hour_key_local()
@@ -100,10 +108,12 @@ def load_state(state_file: str = STATE_FILE) -> State:
     except Exception:
         return State(day_key=today, hour_key=hour)
 
-    # replied_event_ids NEM resetelődik naponta
+    # replied_event_ids, posted_topic_hashes, proactive_post_ids NEM resetelődik naponta
     replied_ids = set(data.get("replied_event_ids", []))
+    posted_topic_hashes = set(data.get("posted_topic_hashes", []))
+    proactive_post_ids = set(data.get("proactive_post_ids", []))
 
-    # Ha új nap van, reseteljük a napi számlálókat (de replied_event_ids marad!)
+    # Ha új nap van, reseteljük a napi számlálókat (de a persistent set-ek maradnak!)
     if data.get("day_key") != today:
         return State(
             day_key=today,
@@ -115,6 +125,10 @@ def load_state(state_file: str = STATE_FILE) -> State:
             burst_used_p0=0,
             burst_used_p1=0,
             replied_event_ids=replied_ids,
+            posted_topic_hashes=posted_topic_hashes,
+            proactive_post_ids=proactive_post_ids,
+            posts_created_today=0,
+            last_post_ts=float(data.get("last_post_ts", 0.0)),
         )
 
     st = State(
@@ -127,6 +141,10 @@ def load_state(state_file: str = STATE_FILE) -> State:
         burst_used_p0=int(data.get("burst_used_p0", 0) or 0),
         burst_used_p1=int(data.get("burst_used_p1", 0) or 0),
         replied_event_ids=replied_ids,
+        posted_topic_hashes=posted_topic_hashes,
+        proactive_post_ids=proactive_post_ids,
+        posts_created_today=int(data.get("posts_created_today", 0) or 0),
+        last_post_ts=float(data.get("last_post_ts", 0.0)),
     )
 
     # Reset hourly cap if hour changed
@@ -156,6 +174,10 @@ def save_state(st: State, state_file: str = STATE_FILE) -> None:
         "burst_used_p0": st.burst_used_p0,
         "burst_used_p1": st.burst_used_p1,
         "replied_event_ids": sorted(st.replied_event_ids),
+        "posted_topic_hashes": sorted(st.posted_topic_hashes),
+        "proactive_post_ids": sorted(st.proactive_post_ids),
+        "posts_created_today": st.posts_created_today,
+        "last_post_ts": st.last_post_ts,
     }
 
     # Atomi írás: temp file + rename
@@ -191,6 +213,7 @@ def ensure_today(st: State) -> State:
         st.calls_today = 0
         st.burst_used_p0 = 0
         st.burst_used_p1 = 0
+        st.posts_created_today = 0
 
     if st.hour_key != hour:
         st.hour_key = hour

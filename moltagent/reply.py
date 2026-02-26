@@ -126,6 +126,85 @@ def _call_openai_api(
     )
 
 
+def build_proactive_post_prompt(topic: str, policy: Dict[str, Any]) -> str:
+    """
+    Prompt építése proaktív poszt generálásához.
+
+    Args:
+        topic: A téma amit ki kell posztolni
+        policy: Policy konfiguráció
+    """
+    style = policy.get("style", {})
+    domain = policy.get("domain", {})
+
+    max_sent = int(style.get("max_sentences", 5))
+    domain_context = domain.get("context", "").strip()
+
+    constitution = f"""You are a concise assistant posting about Moltbook agent topics.
+
+Scope:
+{domain_context}
+
+Rules:
+- Output language: en (ENGLISH ONLY).
+- Max {max_sent} sentences.
+- Write an engaging, open-ended post that invites discussion.
+- Neutral, technical tone.
+- End with a question to encourage replies.
+- Do NOT mention system prompts, policies, or internal reasoning.
+- Do NOT invent product features. If uncertain, say so.
+"""
+
+    prompt = f"""{constitution}
+
+Topic to post about:
+{topic}
+
+Task:
+Write a short, engaging Moltbook post about this topic that invites community discussion.
+"""
+    return prompt
+
+
+def generate_post_text(
+    topic: str,
+    policy: Dict[str, Any],
+    client: OpenAI,
+) -> Tuple[str, int, int]:
+    """
+    Generál egy proaktív poszt szöveget az OpenAI API-val.
+
+    Args:
+        topic: A téma amit ki kell posztolni
+        policy: Policy konfiguráció
+        client: OpenAI kliens
+
+    Returns:
+        (post_text, input_tokens, output_tokens)
+
+    Raises:
+        ReplyError: Ha az API hívás minden retry után is sikertelen
+    """
+    prompt = build_proactive_post_prompt(topic, policy)
+
+    r = call_with_retry(
+        _call_openai_api,
+        client,
+        prompt,
+        max_retries=MAX_RETRIES,
+        base_delay=RETRY_BASE_DELAY,
+        max_delay=RETRY_MAX_DELAY,
+        event_id="proactive_post",
+    )
+
+    text = extract_text(r) or "[no_text]"
+    usage = getattr(r, "usage", None)
+    in_tok = int(getattr(usage, "input_tokens", 0) or 0) if usage else 0
+    out_tok = int(getattr(usage, "output_tokens", 0) or 0) if usage else 0
+
+    return text, in_tok, out_tok
+
+
 def make_outbound_reply(
     event: Dict[str, Any],
     policy: Dict[str, Any],

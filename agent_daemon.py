@@ -13,6 +13,7 @@ Használat:
 from __future__ import annotations
 
 import argparse
+import hashlib
 import logging
 import os
 import signal
@@ -44,6 +45,7 @@ from moltagent import (
     estimate_tokens,
     estimate_cost_usd,
 )
+from moltagent.reply import generate_post_text
 from moltagent.retry import ReplyError
 from moltagent.config import CHARS_PER_TOKEN_EST, USD_PER_1M_INPUT_TOKENS, USD_PER_1M_OUTPUT_TOKENS
 from moltagent.monitoring import (
@@ -275,6 +277,88 @@ def run_poll_cycle(
     return stats
 
 
+def maybe_proactive_post(
+    adapter: BaseAdapter,
+    policy: Dict[str, Any],
+    client: OpenAI,
+) -> bool:
+    """
+    Proaktív poszt küldése ha szükséges.
+
+    Feltételek:
+    - proactive_posts.enabled == true
+    - posts_created_today < max_posts_per_day
+    - Az aktuális UTC óra == post_hour_utc
+    - Az adott téma még nem lett kipostolva (SHA256 hash alapján)
+
+    Returns:
+        True ha posztolt, False egyébként
+    """
+    cfg = policy.get("proactive_posts", {})
+    if not cfg.get("enabled", False):
+        return False
+
+    st = load_state()
+    st = ensure_today(st)
+
+    max_posts = int(cfg.get("max_posts_per_day", 1))
+    if st.posts_created_today >= max_posts:
+        return False
+
+    post_hour_utc = int(cfg.get("post_hour_utc", 9))
+    current_hour = datetime.now(timezone.utc).hour
+    if current_hour != post_hour_utc:
+        return False
+
+    # Ne posztoljon kétszer ugyanabban az órában
+    if st.last_post_ts > 0 and (time.time() - st.last_post_ts) < 3600:
+        return False
+
+    topics = cfg.get("topics", [])
+    if not topics:
+        return False
+
+    # Csak még NEM posztolt témák közül választ (SHA256 hash alapján)
+    unposted = [
+        t for t in topics
+        if hashlib.sha256(t.encode()).hexdigest() not in st.posted_topic_hashes
+    ]
+    if not unposted:
+        logger.info("ℹ️  Proactive: all topics already posted, nothing to do")
+        return False
+
+    topic = unposted[0]
+    logger.info(f"📢 Proactive post: {topic[:60]}...")
+
+    try:
+        post_text, in_tok, out_tok = generate_post_text(topic, policy, client)
+    except Exception as e:
+        logger.error(f"Failed to generate proactive post text: {e}")
+        return False
+
+    post_id = adapter.create_post(post_text)
+
+    if post_id:
+        topic_hash = hashlib.sha256(topic.encode()).hexdigest()
+        st.posts_created_today += 1
+        st.last_post_ts = time.time()
+        st.posted_topic_hashes.add(topic_hash)
+        st.proactive_post_ids.add(post_id)
+        save_state(st)
+
+        # Cost tracking
+        from moltagent.config import CHARS_PER_TOKEN_EST, USD_PER_1M_INPUT_TOKENS, USD_PER_1M_OUTPUT_TOKENS
+        est_cost = estimate_cost_usd(in_tok, out_tok, USD_PER_1M_INPUT_TOKENS, USD_PER_1M_OUTPUT_TOKENS)
+        logger.info(
+            f"✅ Proactive post created: {post_id} | "
+            f"tokens={in_tok}+{out_tok} | cost=${est_cost:.4f}"
+        )
+        return True
+    else:
+        logger.warning("Proactive post: create_post() returned None (API not supported?)")
+        return False
+
+
 def main() -> int:
     """Main daemon entry point."""
     global shutdown_requested
@@ -370,6 +454,9 @@ def main() -> int:
 
             # Run poll cycle
             stats = run_poll_cycle(adapter, policy, client)
+
+            # Proaktív posztolás (ha van téma és eljött az ideje)
+            maybe_proactive_post(adapter, policy, client)
 
             # Update daemon stats
             daemon_stats.total_fetched += stats["fetched"]

@@ -303,6 +303,50 @@ class MoltbookAdapter(BaseAdapter):
             logger.error(f"Failed to send reply: {e}")
             return False
 
+    def create_post(self, text: str) -> Optional[str]:
+        """
+        Create a new standalone post on Moltbook.
+
+        Args:
+            text: Post content
+
+        Returns:
+            post_id if created successfully, None otherwise
+        """
+        # Log the intended post
+        post_log = {
+            "text": text,
+            "ts": datetime.now(timezone.utc).isoformat(),
+            "dry_run": self._dry_run,
+        }
+
+        log_file = os.path.join(self._log_dir, "moltbook_created_posts.jsonl")
+        with open(log_file, "a", encoding="utf-8") as f:
+            f.write(json.dumps(post_log, ensure_ascii=False) + "\n")
+
+        # In dry-run mode, stop here
+        if self._dry_run:
+            logger.info(f"[DRY-RUN] Would create post: {text[:80]}...")
+            return "dry_run_post_id"
+
+        try:
+            result = self._make_request(
+                "POST",
+                "/posts",
+                data={"content": text},
+            )
+
+            post_id = result.get("post", {}).get("id") or result.get("id")
+            if post_id:
+                logger.info(f"✅ Proactive post created: {post_id}")
+            else:
+                logger.warning(f"Post created but no post_id in response: {result}")
+            return post_id
+
+        except Exception as e:
+            logger.error(f"Failed to create post: {e}")
+            return None
+
     def _check_rate_limits(self) -> bool:
         """
         Check if we're within Moltbook rate limits.
