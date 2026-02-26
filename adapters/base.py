@@ -97,12 +97,14 @@ class BaseAdapter(ABC):
         """Return True if adapter is in dry-run mode (no writes)."""
         pass
 
-    def create_post(self, text: str) -> Optional[str]:
+    def create_post(self, title: str, submolt: str, submolt_name: str) -> Optional[str]:
         """
         Create a new standalone post on the platform.
 
         Args:
-            text: Post content
+            title: Post title / content (max 300 chars for Moltbook)
+            submolt: Submolt slug/identifier (e.g. "general")
+            submolt_name: Submolt display name (e.g. "General")
 
         Returns:
             post_id if created successfully, None otherwise.

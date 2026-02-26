@@ -59,6 +59,8 @@ def base_policy():
             "enabled": True,
             "max_posts_per_day": 1,
             "post_hour_utc": 9,
+            "submolt": "general",
+            "submolt_name": "General",
             "topics": [
                 "What are best practices for agent cost control?",
                 "How do you handle rate limits in Moltbook agents?",

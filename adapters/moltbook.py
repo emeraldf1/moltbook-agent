@@ -303,19 +303,23 @@ class MoltbookAdapter(BaseAdapter):
             logger.error(f"Failed to send reply: {e}")
             return False
 
-    def create_post(self, text: str) -> Optional[str]:
+    def create_post(self, title: str, submolt: str, submolt_name: str) -> Optional[str]:
         """
         Create a new standalone post on Moltbook.
 
         Args:
-            text: Post content
+            title: Post title / content (max 300 chars)
+            submolt: Submolt slug/identifier (e.g. "general")
+            submolt_name: Submolt display name (e.g. "General")
 
         Returns:
             post_id if created successfully, None otherwise
         """
         # Log the intended post
         post_log = {
-            "text": text,
+            "title": title,
+            "submolt": submolt,
+            "submolt_name": submolt_name,
             "ts": datetime.now(timezone.utc).isoformat(),
             "dry_run": self._dry_run,
         }
@@ -326,19 +330,23 @@ class MoltbookAdapter(BaseAdapter):
 
         # In dry-run mode, stop here
         if self._dry_run:
-            logger.info(f"[DRY-RUN] Would create post: {text[:80]}...")
+            logger.info(f"[DRY-RUN] Would create post in s/{submolt}: {title[:80]}...")
             return "dry_run_post_id"
 
         try:
             result = self._make_request(
                 "POST",
                 "/posts",
-                data={"content": text},
+                data={
+                    "title": title,
+                    "submolt": submolt,
+                    "submolt_name": submolt_name,
+                },
             )
 
             post_id = result.get("post", {}).get("id") or result.get("id")
             if post_id:
-                logger.info(f"✅ Proactive post created: {post_id}")
+                logger.info(f"✅ Proactive post created in s/{submolt}: {post_id}")
             else:
                 logger.warning(f"Post created but no post_id in response: {result}")
             return post_id

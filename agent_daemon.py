@@ -336,7 +336,9 @@ def maybe_proactive_post(
         logger.error(f"Failed to generate proactive post text: {e}")
         return False
 
-    post_id = adapter.create_post(post_text)
+    submolt = cfg.get("submolt", "general")
+    submolt_name = cfg.get("submolt_name", "General")
+    post_id = adapter.create_post(post_text, submolt, submolt_name)
 
     if post_id:
         topic_hash = hashlib.sha256(topic.encode()).hexdigest()
