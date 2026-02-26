@@ -97,6 +97,22 @@ class BaseAdapter(ABC):
         """Return True if adapter is in dry-run mode (no writes)."""
         pass
 
+    def respond_to_challenge(self, post_id: str) -> bool:
+        """
+        Respond to a platform moderation challenge post.
+
+        The Moltbook auto-mod sends challenge events to verify the agent
+        is alive and operational. Failing to respond results in suspension.
+
+        Args:
+            post_id: The challenge post ID to reply to
+
+        Returns:
+            True if challenge was answered, False otherwise.
+            Default implementation is a no-op (not supported).
+        """
+        return False
+
     def create_post(self, title: str, submolt: str, submolt_name: str) -> Optional[str]:
         """
         Create a new standalone post on the platform.

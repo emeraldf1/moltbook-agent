@@ -253,8 +253,28 @@ def run_poll_cycle(
             "daemon_fetched_at": datetime.now(timezone.utc).isoformat(),
         })
 
-    # Process each event
-    for event in events:
+    # --- Challenge events: bypass decision pipeline, answer immediately ---
+    st = load_state()
+    st = ensure_today(st)
+    challenge_events = [e for e in events if e.get("type") == "challenge"]
+    for ev in challenge_events:
+        ev_id = ev.get("id", "")
+        post_id = ev.get("meta", {}).get("post_id") or ev_id.split("_", 1)[-1]
+        if post_id and not st.has_replied(ev_id):
+            success = adapter.respond_to_challenge(post_id)
+            if success:
+                st.mark_replied(ev_id)
+                save_state(st)
+                logger.info(f"✅ Challenge answered: {ev_id}")
+                stats["replied"] += 1
+            else:
+                logger.warning(f"⚠️ Challenge response failed: {ev_id}")
+                stats["errors"] += 1
+        stats["processed"] += 1
+
+    # Normal (non-challenge) events → decision pipeline
+    normal_events = [e for e in events if e.get("type") != "challenge"]
+    for event in normal_events:
         if shutdown_requested:
             logger.info("Shutdown requested, stopping processing")
             break
@@ -270,8 +290,8 @@ def run_poll_cycle(
             else:
                 stats["skipped"] += 1
 
-        except Exception as e:
-            logger.exception(f"Error processing event {event.get('id')}: {e}")
+        except Exception as exc:
+            logger.exception(f"Error processing event {event.get('id')}: {exc}")
             stats["errors"] += 1
 
     return stats

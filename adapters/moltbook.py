@@ -187,6 +187,9 @@ class MoltbookAdapter(BaseAdapter):
             author_info = post.get("author", {})
             author_name = author_info.get("name", "unknown")
 
+            # Preserve raw event type (challenge, post, etc.)
+            raw_type = post.get("type", "post")
+
             # Combine title and content
             title = post.get("title", "")
             content = post.get("content", "")
@@ -197,8 +200,8 @@ class MoltbookAdapter(BaseAdapter):
             mentions_me = self._check_mention(text)
 
             return {
-                "id": f"post_{post_id}",
-                "type": "post",
+                "id": f"{raw_type}_{post_id}",
+                "type": raw_type,
                 "author": author_name,
                 "text": text,
                 "ts": post.get("created_at", datetime.now(timezone.utc).isoformat()),
@@ -302,6 +305,41 @@ class MoltbookAdapter(BaseAdapter):
         except requests.RequestException as e:
             logger.error(f"Failed to send reply: {e}")
             return False
+
+    def respond_to_challenge(self, post_id: str) -> bool:
+        """
+        Respond to a Moltbook auto-mod challenge post.
+
+        The platform sends challenge events to verify the agent is alive.
+        Failing to respond 3 times results in automatic suspension.
+
+        Args:
+            post_id: The challenge post ID to reply to
+
+        Returns:
+            True if challenge was answered successfully, False otherwise
+        """
+        text = "Challenge acknowledged. Agent is active and operational."
+
+        # Log the challenge response
+        challenge_log = {
+            "post_id": post_id,
+            "ts": datetime.now(timezone.utc).isoformat(),
+            "dry_run": self._dry_run,
+        }
+        log_file = os.path.join(self._log_dir, "moltbook_challenges.jsonl")
+        with open(log_file, "a", encoding="utf-8") as f:
+            f.write(json.dumps(challenge_log, ensure_ascii=False) + "\n")
+
+        if self._dry_run:
+            logger.info(f"[DRY-RUN] Would respond to challenge post {post_id}")
+            return True
+
+        return self.send_reply(
+            event_id=f"challenge_{post_id}",
+            text=text,
+            post_id=post_id,
+        )
 
     def create_post(self, title: str, submolt: str, submolt_name: str) -> Optional[str]:
         """
