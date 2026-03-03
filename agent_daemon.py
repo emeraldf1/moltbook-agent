@@ -358,12 +358,16 @@ def maybe_proactive_post(
 
     submolt = cfg.get("submolt", "general")
     submolt_name = cfg.get("submolt_name", "General")
+
+    # Mark attempt timestamp BEFORE API call – prevents retry spam on failure
+    st.last_post_ts = time.time()
+    save_state(st)
+
     post_id = adapter.create_post(post_text, submolt, submolt_name)
 
     if post_id:
         topic_hash = hashlib.sha256(topic.encode()).hexdigest()
         st.posts_created_today += 1
-        st.last_post_ts = time.time()
         st.posted_topic_hashes.add(topic_hash)
         st.proactive_post_ids.add(post_id)
         save_state(st)

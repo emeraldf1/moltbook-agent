@@ -383,6 +383,8 @@ class MoltbookAdapter(BaseAdapter):
             )
 
             post_id = result.get("post", {}).get("id") or result.get("id")
+            if result.get("already_existed"):
+                logger.warning(f"Post already existed (dedup by platform): {post_id}")
             if post_id:
                 logger.info(f"✅ Proactive post created in s/{submolt}: {post_id}")
             else:
